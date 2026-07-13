@@ -2,7 +2,7 @@
 
 # ============================================================ #
 # 🚀 Gost Proxy Installer
-#      v1.3.0 (2026) © Ivan.Nginx
+#      v1.4.0 (2026) © Ivan.Nginx
 # ------------------------------------------------------------ #
 # 🧾 Description:
 #    ★ Installs / Updates Gost Proxy
@@ -175,11 +175,13 @@ check_dependencies() {
 
 parse_arguments() {
 
-    if [[ $# -eq 0 ]]; then
+    local arg1="${1:-}"
+
+    if [[ -z "$arg1" ]]; then
         return
     fi
 
-    if [[ "$1" == "--force" || "$1" == "-f" ]]; then
+    if [[ "$arg1" == "--force" || "$arg1" == "-f" ]]; then
         FORCE_MODE=true
         return
     fi
@@ -278,12 +280,25 @@ fetch_latest_release() {
 main() {
 
     require_root
-
     parse_arguments "$@"
-
     check_dependencies
-
     fetch_latest_release
+
+    if detect_installation; then
+        if $FORCE_MODE; then
+            ask_configuration
+            install_gost
+        elif [[ $# -gt 0 ]]; then
+            reconfigure_gost
+        else
+            update_gost
+        fi
+    else
+        ask_configuration
+        install_gost
+    fi
+
+}
 
 ###############################################################################
 # Download & Install
@@ -314,7 +329,7 @@ download_gost() {
 
     rm -rf "$tmp_dir"
 
-    success "Gost installed."
+    success "Gost downloaded."
 
 }
 
@@ -458,14 +473,14 @@ EOF
 install_gost() {
 
     download_gost
-
     create_user
-
     create_directories
-
     export_config
-
     generate_service
+
+    restart_service
+
+    success "Gost installed."
 
 }
 
@@ -476,9 +491,7 @@ install_gost() {
 update_gost() {
 
     download_gost
-
-    systemctl restart "$SERVICE_NAME"
-
+    restart_service
     success "Gost updated."
 
 }
@@ -490,12 +503,24 @@ update_gost() {
 reconfigure_gost() {
 
     export_config
-
-    systemctl restart "$SERVICE_NAME"
-
+    restart_service
     success "Configuration updated."
-
 }
+
+###############################################################################
+# Restart
+###############################################################################
+
+restart_service() {
+
+    systemctl daemon-reload
+    systemctl enable "$SERVICE_NAME" >/dev/null 2>&1
+
+    if systemctl is-active --quiet "$SERVICE_NAME"; then
+        systemctl restart "$SERVICE_NAME"
+    else
+        systemctl start "$SERVICE_NAME"
+    fi
 
 }
 
