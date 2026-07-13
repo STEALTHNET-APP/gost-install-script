@@ -2,7 +2,7 @@
 
 # ============================================================ #
 # 🚀 Gost Proxy Installer
-#      v1.0.0 (2026) © Ivan.Nginx
+#      v1.3.0 (2026) © Ivan.Nginx
 # ------------------------------------------------------------ #
 # 🧾 Description:
 #    ★ Installs / Updates Gost Proxy
@@ -13,23 +13,28 @@
 #    ★ Tests HTTP & SOCKS5 proxies
 #    ★ Supports Install / Update / Reconfigure / Force modes
 # ------------------------------------------------------------ #
-# 🔹 Usage:
+# 🔹 Local Usage:
+#    ➤ chmod +x install_gost.sh
 #
-#    ./install_gost.sh
-#
-#    or
-#
-#    ./install_gost.sh HTTP_PORT SOCKS_PORT USER PASSWORD
+#    ➤ ./install_gost.sh
 #
 #    or
 #
-#    ./install_gost.sh --force
+#    ➤ ./install_gost.sh HTTP_PORT SOCKS_PORT USER PASSWORD
 #
+#    or
+#
+#    ➤ ./install_gost.sh --force
+#
+# 🔸 Remote install:
+#    ➤ bash <(curl -fsSL https://raw.githubusercontent.com/STEALTHNET-APP/gost-install-script/main/install_gost.sh)
+#
+# 🔸 Remote reinstall
+#    ➤ bash <(curl -fsSL https://raw.githubusercontent.com/STEALTHNET-APP/gost-install-script/main/install_gost.sh) -- --force
 # ------------------------------------------------------------ #
 # 🌍 Repository:
 #
-#    https://github.com/<YOUR_REPOSITORY>
-#
+#    https://github.com/STEALTHNET-APP/gost-install-script
 # ============================================================ #
 
 set -Eeuo pipefail
@@ -53,6 +58,8 @@ BIN_FILE="${BIN_DIR}/gost"
 CONFIG_DIR="/etc/gost"
 CONFIG_FILE="${CONFIG_DIR}/config.yml"
 
+LOG_DIR="/var/log/gost"
+
 SERVICE_NAME="gost"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 
@@ -72,6 +79,8 @@ INSTALLED_VERSION=""
 
 ARCHIVE_NAME=""
 DOWNLOAD_URL=""
+
+declare -ag LISTENERS=()
 
 ###############################################################################
 # Colors
@@ -240,18 +249,19 @@ fetch_latest_release() {
 
     info "Fetching latest Gost release..."
 
-    local tag
+    local redirect
 
-    tag="$(
-        curl -fsSL "$GITHUB_API" |
-        grep '"tag_name"' |
-        head -n1 |
-        sed -E 's/.*"([^"]+)".*/\1/'
+    redirect="$(
+        curl -fsSLI \
+            -o /dev/null \
+            -w '%{url_effective}' \
+            "https://github.com/${GITHUB_REPO}/releases/latest"
     )"
 
-    [[ -n "$tag" ]] || die "Unable to determine latest Gost version."
+    LATEST_VERSION="${redirect##*/}"
 
-    LATEST_VERSION="$tag"
+    [[ "$LATEST_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+        || die "Unable to determine latest Gost version."
 
     ARCHIVE_NAME="gost_${LATEST_VERSION#v}_linux_amd64.tar.gz"
 
@@ -341,12 +351,22 @@ create_user() {
 create_directories() {
 
     mkdir -p "$CONFIG_DIR"
-
-    chown \
-        root:"$INSTALL_GROUP" \
-        "$CONFIG_DIR"
-
+    chown root:"$INSTALL_GROUP" "$CONFIG_DIR"
     chmod 750 "$CONFIG_DIR"
+
+    mkdir -p "$LOG_DIR"
+    chown "$INSTALL_USER":"$INSTALL_GROUP" "$LOG_DIR"
+    chmod 750 "$LOG_DIR"
+
+}
+
+###############################################################################
+# Listeners
+###############################################################################
+
+add_listener() {
+
+    LISTENERS+=("$1")
 
 }
 
@@ -354,49 +374,36 @@ create_directories() {
 # Configuration
 ###############################################################################
 
-generate_config() {
+export_config() {
 
-    info "Generating config..."
+    info "Exporting Gost configuration..."
 
-    cat > "$CONFIG_FILE" <<EOF
-services:
+    LISTENERS=()
 
-  - name: http
+    add_listener "http://${USERNAME}:${PASSWORD}@:${HTTP_PORT}"
 
-    addr: ":${HTTP_PORT}"
+    add_listener "socks5://${USERNAME}:${PASSWORD}@:${SOCKS_PORT}"
 
-    handler:
-      type: http
+    local args=()
+    local listener
 
-      auth:
-        accounts:
-          - username: ${USERNAME}
-            password: ${PASSWORD}
+    for listener in "${LISTENERS[@]}"; do
+        args+=(
+            -L "$listener"
+        )
+    done
 
-    listener:
-      type: tcp
-
-  - name: socks
-
-    addr: ":${SOCKS_PORT}"
-
-    handler:
-      type: socks5
-
-      auth:
-        accounts:
-          - username: ${USERNAME}
-            password: ${PASSWORD}
-
-    listener:
-      type: tcp
-EOF
+    "${BIN_FILE}" \
+        "${args[@]}" \
+        -O yaml \
+        > "$CONFIG_FILE" \
+        || die "Failed to export Gost configuration."
 
     chmod 640 "$CONFIG_FILE"
 
     chown root:"$INSTALL_GROUP" "$CONFIG_FILE"
 
-    success "Configuration written."
+    success "Configuration exported."
 
 }
 
@@ -456,7 +463,7 @@ install_gost() {
 
     create_directories
 
-    generate_config
+    export_config
 
     generate_service
 
@@ -482,7 +489,7 @@ update_gost() {
 
 reconfigure_gost() {
 
-    generate_config
+    export_config
 
     systemctl restart "$SERVICE_NAME"
 
