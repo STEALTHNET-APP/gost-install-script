@@ -2,7 +2,7 @@
 
 # ============================================================ #
 # 🚀 Gost Proxy Installer
-#      v1.4.0 (2026) © Ivan.Nginx
+#      v1.6.0 (2026) © Ivan.Nginx
 # ------------------------------------------------------------ #
 # 🧾 Description:
 #    ★ Installs / Updates Gost Proxy
@@ -423,6 +423,66 @@ export_config() {
 }
 
 ###############################################################################
+# Firewall Configuration
+###############################################################################
+
+configure_firewall() {
+
+    if [[ -z "${HTTP_PORT:-}" || -z "${SOCKS_PORT:-}" ]]; then
+        warning "Ports are not specified. Skipping firewall configuration."
+        return
+    fi
+
+    info "Configuring firewall for ports: ${HTTP_PORT} (HTTP), ${SOCKS_PORT} (SOCKS5)..."
+
+    # 1. Firewalld (CentOS, RHEL, Fedora)
+    if command_exists firewall-cmd && systemctl is-active --quiet firewalld; then
+        info "Detected active firewalld. Applying rules..."
+        firewall-cmd --permanent --add-port="${HTTP_PORT}/tcp" >/dev/null 2>&1 || true
+        firewall-cmd --permanent --add-port="${SOCKS_PORT}/tcp" >/dev/null 2>&1 || true
+        firewall-cmd --reload >/dev/null 2>&1 || true
+        success "firewalld rules applied."
+        return
+    fi
+
+    # 2. UFW (Debian, Ubuntu)
+    if command_exists ufw && ufw status | grep -q "Status: active"; then
+        info "Detected active UFW. Applying rules..."
+        ufw allow "${HTTP_PORT}/tcp comment 'HTTP Proxy'" >/dev/null 2>&1 || true
+        ufw allow "${SOCKS_PORT}/tcp  comment 'SOCKS Proxy" >/dev/null 2>&1 || true
+        ufw reload >/dev/null 2>&1 || true
+        success "UFW rules applied."
+        return
+    fi
+
+    # 3. Iptables (Fallback / Generic)
+    if command_exists iptables; then
+        info "Detected iptables. Applying rules..."
+        # Check if rules already exist before adding to avoid duplicates
+        if ! iptables -C INPUT -p tcp --dport "${HTTP_PORT}" -j ACCEPT >/dev/null 2>&1; then
+            iptables -I INPUT -p tcp --dport "${HTTP_PORT}" -j ACCEPT || true
+        fi
+        if ! iptables -C INPUT -p tcp --dport "${SOCKS_PORT}" -j ACCEPT >/dev/null 2>&1; then
+            iptables -I INPUT -p tcp --dport "${SOCKS_PORT}" -j ACCEPT || true
+        fi
+
+        # Attempt to make iptables persistent
+        if command_exists iptables-save; then
+            if [[ -d /etc/iptables ]]; then
+                iptables-save > /etc/iptables/rules.v4 2>/dev/null || true
+            elif command_exists service && service iptables status >/dev/null 2>&1; then
+                service iptables save >/dev/null 2>&1 || true
+            fi
+        fi
+        success "iptables rules applied."
+        return
+    fi
+
+    warning "No active firewall system (firewalld, UFW, or iptables) was detected. Skip firewall configuration."
+
+}
+
+###############################################################################
 # systemd
 ###############################################################################
 
@@ -476,6 +536,7 @@ install_gost() {
     create_user
     create_directories
     export_config
+    configure_firewall
     generate_service
 
     restart_service
@@ -503,6 +564,7 @@ update_gost() {
 reconfigure_gost() {
 
     export_config
+    configure_firewall
     restart_service
     success "Configuration updated."
 }

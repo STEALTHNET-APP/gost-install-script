@@ -27,7 +27,7 @@ cd gost-install-script
 
 chmod +x install_gost.sh
 
-sudo ./install_gost.sh
+./install_gost.sh
 ```
 
 ### Remote
