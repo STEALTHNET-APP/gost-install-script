@@ -1,4 +1,4 @@
-# Gost Installer
+# Gost Proxy Installer
 
 > Simple installer for **Gost** with support for installation, reconfiguration and automatic updates.
 
@@ -49,7 +49,7 @@ sudo ./install_gost.sh --force
 ### Remote
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/STEALTHNET-APP/gost-install-script/main/install_gost.sh) -- --force
+bash <(curl -fsSL https://raw.githubusercontent.com/STEALTHNET-APP/gost-install-script/main/install_gost.sh) --force
 ```
 
 ---

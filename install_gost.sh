@@ -2,7 +2,7 @@
 
 # ============================================================ #
 # 🚀 Gost Proxy Installer
-#      v1.6.0 (2026) © Ivan.Nginx
+#      v1.8.0 (2026) © Ivan.Nginx
 # ------------------------------------------------------------ #
 # 🧾 Description:
 #    ★ Installs / Updates Gost Proxy
@@ -30,7 +30,7 @@
 #    ➤ bash <(curl -fsSL https://raw.githubusercontent.com/STEALTHNET-APP/gost-install-script/main/install_gost.sh)
 #
 # 🔸 Remote reinstall
-#    ➤ bash <(curl -fsSL https://raw.githubusercontent.com/STEALTHNET-APP/gost-install-script/main/install_gost.sh) -- --force
+#    ➤ bash <(curl -fsSL https://raw.githubusercontent.com/STEALTHNET-APP/gost-install-script/main/install_gost.sh) --force
 # ------------------------------------------------------------ #
 # 🌍 Repository:
 #
@@ -274,33 +274,6 @@ fetch_latest_release() {
 }
 
 ###############################################################################
-# Main
-###############################################################################
-
-main() {
-
-    require_root
-    parse_arguments "$@"
-    check_dependencies
-    fetch_latest_release
-
-    if detect_installation; then
-        if $FORCE_MODE; then
-            ask_configuration
-            install_gost
-        elif [[ $# -gt 0 ]]; then
-            reconfigure_gost
-        else
-            update_gost
-        fi
-    else
-        ask_configuration
-        install_gost
-    fi
-
-}
-
-###############################################################################
 # Download & Install
 ###############################################################################
 
@@ -449,7 +422,7 @@ configure_firewall() {
     if command_exists ufw && ufw status | grep -q "Status: active"; then
         info "Detected active UFW. Applying rules..."
         ufw allow "${HTTP_PORT}/tcp comment 'HTTP Proxy'" >/dev/null 2>&1 || true
-        ufw allow "${SOCKS_PORT}/tcp  comment 'SOCKS Proxy" >/dev/null 2>&1 || true
+        ufw allow "${SOCKS_PORT}/tcp comment 'SOCKS Proxy'" >/dev/null 2>&1 || true
         ufw reload >/dev/null 2>&1 || true
         success "UFW rules applied."
         return
@@ -527,6 +500,96 @@ EOF
 }
 
 ###############################################################################
+# Proxy Verification
+###############################################################################
+
+test_proxies() {
+
+    if [[ -z "${HTTP_PORT:-}" || -z "${SOCKS_PORT:-}" || -z "${USERNAME:-}" || -z "${PASSWORD:-}" ]]; then
+        return
+    fi
+
+    info "Waiting for Gost proxy to start up..."
+    sleep 3
+
+    local test_url="https://one.one.one.one"
+    local max_attempts=5
+    local check_ok=true
+
+    info "Testing HTTP proxy locally..."
+    local http_success=false
+    for ((i=1; i<=max_attempts; i++)); do
+        if curl -fsSL -o /dev/null -x "http://${USERNAME}:${PASSWORD}@127.0.0.1:${HTTP_PORT}" "$test_url" --connect-timeout 3 --max-time 6 >/dev/null 2>&1; then
+            http_success=true
+            break
+        fi
+        sleep 1
+    done
+
+    if $http_success; then
+        success "HTTP OK"
+    else
+        error "HTTP FAILED"
+        check_ok=false
+    fi
+
+    info "Testing SOCKS5 proxy locally..."
+    local socks_success=false
+    for ((i=1; i<=max_attempts; i++)); do
+        if curl -fsSL -o /dev/null --proxy "socks5h://${USERNAME}:${PASSWORD}@127.0.0.1:${SOCKS_PORT}" "$test_url" --connect-timeout 3 --max-time 6 >/dev/null 2>&1; then
+            socks_success=true
+            break
+        fi
+        sleep 1
+    done
+
+    if $socks_success; then
+        success "SOCKS5 OK"
+    else
+        error "SOCKS5 FAILED"
+        check_ok=false
+    fi
+
+    if ! $check_ok; then
+        warning "One or more verification checks failed. Check proxy logs using: journalctl -u ${SERVICE_NAME} -n 50"
+    fi
+
+}
+
+print_summary() {
+
+    if [[ -z "${HTTP_PORT:-}" || -z "${SOCKS_PORT:-}" || -z "${USERNAME:-}" || -z "${PASSWORD:-}" ]]; then
+        return
+    fi
+
+    local server_ip
+    server_ip="$(curl -fsSL --connect-timeout 3 https://icanhazip.com 2>/dev/null || curl -fsSL --connect-timeout 3 https://api.ipify.org 2>/dev/null || echo "YOUR_SERVER_IP")"
+    server_ip="$(echo "$server_ip" | tr -d '[:space:]')"
+
+    echo
+    echo "────────────────────────────────────────"
+    echo " Gost Proxy Setup Summary"
+    echo "────────────────────────────────────────"
+    echo " Server IP:   ${server_ip}"
+    echo " HTTP Port:   ${HTTP_PORT}"
+    echo " SOCKS Port:  ${SOCKS_PORT}"
+    echo " Username:    ${USERNAME}"
+    echo " Password:    ${PASSWORD}"
+    echo "────────────────────────────────────────"
+    echo
+    echo "📌 Verification commands:"
+    echo
+    echo " HTTP Check:"
+    echo "   curl -x http://${USERNAME}:${PASSWORD}@${server_ip}:${HTTP_PORT} https://one.one.one.one"
+    echo
+    echo " SOCKS5 Check:"
+    echo "   curl --proxy socks5h://${USERNAME}:${PASSWORD}@${server_ip}:${SOCKS_PORT} https://one.one.one.one"
+    echo "────────────────────────────────────────"
+    echo
+
+}
+
+###############################################################################
 # Install
 ###############################################################################
 
@@ -538,8 +601,10 @@ install_gost() {
     export_config
     configure_firewall
     generate_service
-
     restart_service
+
+    test_proxies
+    print_summary
 
     success "Gost installed."
 
@@ -566,6 +631,10 @@ reconfigure_gost() {
     export_config
     configure_firewall
     restart_service
+
+    test_proxies
+    print_summary
+
     success "Configuration updated."
 }
 
@@ -582,6 +651,33 @@ restart_service() {
         systemctl restart "$SERVICE_NAME"
     else
         systemctl start "$SERVICE_NAME"
+    fi
+
+}
+
+###############################################################################
+# Main
+###############################################################################
+
+main() {
+
+    require_root
+    parse_arguments "$@"
+    check_dependencies
+    fetch_latest_release
+
+    if detect_installation; then
+        if $FORCE_MODE; then
+            ask_configuration
+            install_gost
+        elif [[ $# -gt 0 ]]; then
+            reconfigure_gost
+        else
+            update_gost
+        fi
+    else
+        ask_configuration
+        install_gost
     fi
 
 }
